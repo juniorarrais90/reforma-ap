@@ -111,7 +111,7 @@
     <b>Como lançar:</b> adicione linhas na planilha
     <a href="https://docs.google.com/spreadsheets/d/1WXbaD8NEP2orjQhOFJ8Gp-besXWnz1SaJ_7I1u0Sw-s/edit" target="_blank">Reforma AP — Gastos (v2)</a>.<br>
     <b>Compra à vista:</b> uma linha normal, coluna Parcelas vazia.<br>
-    <b>Parcelas iguais:</b> uma linha só — Valor = total da compra, Parcelas = quantidade (ex.: <b>10</b> ou <b>10x</b>), Data = vencimento da 1ª parcela. O painel divide e distribui nos meses seguintes sozinho.<br>
+    <b>Parcelas iguais:</b> uma linha só — Valor = total da compra, Parcelas = quantidade (ex.: <b>10</b> ou <b>10x</b>), Data = data da compra. O painel divide e distribui a partir do mês seguinte sozinho (cada parcela conta como paga no mês dela).<br>
     <b>Entrada + resto parcelado:</b> duas linhas — a entrada como compra à vista (Pago) e o restante como linha parcelada.<br>
     <b>Parcelas de valores diferentes:</b> uma linha por parcela, com "(1/5)", "(2/5)"… na descrição e o status de cada uma (Pago ou A pagar); coluna Parcelas vazia.<br>
     <b>"Apartamento Todo":</b> aparece aqui como <b>Geral (obra toda)</b> — use para gastos que não pertencem a um cômodo específico (pedreiro, elétrica geral, frete).
@@ -203,9 +203,10 @@ function expandir(rows){
     const total = num(g["Valor"]);
     const base = Math.floor(total/N*100)/100;
     for (let i=1; i<=N; i++){
-      const dt = data ? addMonths(data, i-1) : "";
+      // Data = data da compra; a 1ª parcela cai na fatura do mês seguinte
+      const dt = data ? addMonths(data, i) : "";
       const val = (i===N) ? Math.round((total - base*(N-1))*100)/100 : base;
-      const futura = dt ? dt > HOJE : false;
+      const futura = dt ? dt.slice(0,7) > HOJE.slice(0,7) : false;
       out.push({...g,
         Data: dt,
         "Descrição": (g["Descrição"]||"") + " (" + i + "/" + N + ")",
