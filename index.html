@@ -81,6 +81,16 @@
     <button id="fLimpar">limpar filtros</button>
   </div>
 
+  <div class="card" style="margin-bottom:14px">
+    <h2>Planejamento — o que ainda vai sair</h2>
+    <div class="kpis" id="planoKpis" style="margin-bottom:12px"></div>
+    <div class="sub" style="margin-bottom:6px">Mês a mês: parcelas já comprometidas + pagamentos grandes com mês marcado</div>
+    <div class="chartbox"><canvas id="chPlano"></canvas></div>
+    <div id="planoMeses" style="max-height:320px; overflow:auto; margin-top:12px"></div>
+    <h2 style="margin-top:16px">Pagamentos grandes pendentes (de uma vez)</h2>
+    <div id="planoGrandes"></div>
+  </div>
+
   <div class="grid2">
     <div class="card"><h2>Gastos por tipo</h2><div class="chartbox"><canvas id="chTipo"></canvas></div></div>
     <div class="card"><h2>Gastos por cômodo</h2><div class="chartbox"><canvas id="chComodo"></canvas></div></div>
@@ -294,6 +304,7 @@ function render(){
       <b>${fmt(porPessoa[n]||0)}</b></div>`).join("");
 
   destroyCharts();
+  renderPlano(G);
   const gastoPorTipo = groupSum(G,"Tipo");
   const tipos = Object.keys(gastoPorTipo).sort((a,b)=>gastoPorTipo[b]-gastoPorTipo[a]);
 
@@ -390,6 +401,79 @@ function render(){
       pagination:{previous:"Anterior", next:"Próxima", showing:"Exibindo", results:()=>"lançamentos", of:"de", to:"a"} }
   });
   gridInst.render(document.getElementById("tabela"));
+}
+
+// planejamento: separa pagamentos grandes (de uma vez) das parcelas mensais
+// e projeta o que sai em cada mês a partir do próximo
+function renderPlano(G){
+  const mesAtual = HOJE.slice(0,7);
+  const nomeMes = m => { const [y,mo]=m.split("-"); return new Date(+y, +mo-1, 1).toLocaleDateString("pt-BR",{month:"short", year:"2-digit"}).replace(". de "," ").replace(".",""); };
+  const parcelas = G.filter(g=>g._aPagar && g._parc);
+  const grandes  = G.filter(g=>g._aPagar && !g._parc)
+    .sort((a,b)=>(a.Data||"").localeCompare(b.Data||""));
+  const comMes   = grandes.filter(g=>(g.Data||"").slice(0,7) > mesAtual);
+  const semMes   = grandes.filter(g=>!((g.Data||"").slice(0,7) > mesAtual));
+  const soma = arr => arr.reduce((a,g)=>a+g._valor,0);
+
+  const porMes = {};
+  const add = (m, campo, g) => {
+    if (!porMes[m]) porMes[m] = {parc:0, grande:0, jr:0, ty:0};
+    porMes[m][campo] += g._valor;
+    if (campo==="parc"){ if (g["Quem pagou"]==="Júnior") porMes[m].jr += g._valor; else if (g["Quem pagou"]==="Tayna") porMes[m].ty += g._valor; }
+  };
+  parcelas.forEach(g=>add(g.Data.slice(0,7),"parc",g));
+  comMes.forEach(g=>add(g.Data.slice(0,7),"grande",g));
+  const meses = Object.keys(porMes).sort();
+  const proxMes = addMonths(mesAtual+"-01",1).slice(0,7);
+  const prox = porMes[proxMes] || {parc:0, grande:0};
+
+  document.getElementById("planoKpis").innerHTML = `
+    <div class="kpi"><div class="lb">Pagamentos grandes pendentes</div>
+      <div class="vl neg">${fmt(soma(grandes))}</div>
+      <div class="sm">${grandes.length} pagamento(s) de uma vez — fornecedores e entregas</div></div>
+    <div class="kpi"><div class="lb">Parcelas a vencer (cartão/boleto)</div>
+      <div class="vl">${fmt(soma(parcelas))}</div>
+      <div class="sm">${new Set(parcelas.map(g=>g._id)).size} compra(s) parcelada(s), até ${meses.length?nomeMes(parcelas.reduce((a,g)=>g.Data>a?g.Data:a,"").slice(0,7)):"—"}</div></div>
+    <div class="kpi navy"><div class="lb">Certo para ${nomeMes(proxMes)}</div>
+      <div class="vl">${fmt(prox.parc+prox.grande)}</div>
+      <div class="sm">${fmt(prox.parc)} em parcelas${prox.grande?" + "+fmt(prox.grande)+" de pagamentos grandes":""}</div></div>`;
+
+  const mesesGraf = meses.slice(0,12);
+  charts.plano = new Chart(document.getElementById("chPlano"),{
+    type:"bar",
+    data:{ labels:mesesGraf.map(nomeMes), datasets:[
+      {label:"Parcelas", data:mesesGraf.map(m=>porMes[m].parc), backgroundColor:"#2f6fd6", stack:"s"},
+      {label:"Pagamentos grandes", data:mesesGraf.map(m=>porMes[m].grande), backgroundColor:"#c0392b", stack:"s"}]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{position:"bottom"}, tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmt(c.parsed.y)}}},
+      scales:{ x:{stacked:true}, y:{stacked:true, ticks:{callback:v=>"R$ "+(v/1000)+"k"}} } }});
+
+  let acc = 0;
+  document.getElementById("planoMeses").innerHTML = meses.length ? `<table class="prevtab">
+    <tr><th>Mês</th><th style="text-align:right">Parcelas</th><th style="text-align:right">Júnior · Tayna</th>
+      <th style="text-align:right">Grandes</th><th style="text-align:right">Total do mês</th></tr>
+    ${meses.map(m=>{ const p=porMes[m]; acc += p.parc+p.grande; return `<tr>
+      <td style="white-space:nowrap">${nomeMes(m)}</td><td class="num">${fmt(p.parc)}</td>
+      <td class="num" style="color:var(--mut)">${fmt(p.jr)} · ${fmt(p.ty)}</td>
+      <td class="num ${p.grande?'neg':''}">${p.grande?fmt(p.grande):"—"}</td>
+      <td class="num" style="font-weight:600">${fmt(p.parc+p.grande)}</td></tr>`; }).join("")}
+  </table>` : '<span class="sub">Nenhuma parcela futura.</span>';
+
+  const quando = g => {
+    const m = (g.Data||"").slice(0,7);
+    if (m > mesAtual) return g.Data.split("-").reverse().join("/");
+    const obs = (g["Observações"]||"").trim();
+    return obs ? obs : "sem data definida";
+  };
+  document.getElementById("planoGrandes").innerHTML = grandes.length ? `<table class="prevtab">
+    <tr><th>O quê</th><th>Fornecedor</th><th>Quando</th><th style="text-align:right">Valor</th></tr>
+    ${[...semMes, ...comMes].map(g=>`<tr>
+      <td>${g["Descrição"]||""}</td><td>${g["Fornecedor"]||""}</td>
+      <td style="color:var(--mut); font-size:12.5px">${(g.Data||"").slice(0,7) > mesAtual ? '<span class="tag fut">'+quando(g)+'</span>' : quando(g)}</td>
+      <td class="num">${fmt(g._valor)}</td></tr>`).join("")}
+    <tr><td></td><td></td><td style="font-weight:600">Sem mês marcado: ${fmt(soma(semMes))} · Com mês: ${fmt(soma(comMes))}</td>
+      <td class="num" style="font-weight:700">${fmt(soma(grandes))}</td></tr>
+  </table>` : '<span class="sub">Nenhum pagamento grande pendente.</span>';
 }
 
 function popFiltro(id, values, saved){
